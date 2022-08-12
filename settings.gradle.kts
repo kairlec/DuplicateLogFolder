@@ -1,3 +1,6 @@
-rootProject.name = "duplicate-log-compression"
-include("instrument")
-include("test")
+enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+
+rootProject.name = "duplicate-log-folder"
+include("folder")
+include("tpj")
+include("protos")

@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package com.kairlec.log;
+
+option java_package = "com.kairlec.log";
+option java_outer_classname = "LogProto";
+option java_multiple_files = true;
+
+message ArgLogResult{
+  optional string throwable_message = 1;
+  optional string format_message = 2;
+  repeated ArgLogItem arg_messages = 3;
+}
+
+message ArgLogItem{
+  optional string arg_message_item = 1;
+}
+
+message LazyLogResult{
+  optional string throwable_message = 1;
+  string message = 2;
+}
+
+message LogResult{
+  oneof result{
+    ArgLogResult arg_log_result = 1;
+    LazyLogResult lazy_log_result = 2;
+  }
+  int32 level = 3;
+}
