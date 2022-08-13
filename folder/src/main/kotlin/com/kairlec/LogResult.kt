@@ -5,7 +5,7 @@
 
 package com.kairlec
 
-import com.kairlec.KLoggerContext.KLoggerThreadContext
+import com.kairlec.FolderKLoggerContext.FolderKLoggerThreadContext
 import com.kairlec.log.*
 import mu.KLogger
 import mu.internal.ErrorMessageProducer
@@ -25,33 +25,77 @@ data class MatchResult(
     }
 }
 
-object KLoggerContext {
-    class KLoggerThreadContext(
-        var last: List<LogResult>,
-        val buffer: MutableList<Any>,
-        var countBuffer: Int,
-        var matchIndex: Int,
-        var matchFastFailed: Boolean
+class FolderKLoggerConfig {
+    var persistenceStrategy: LogPersistenceStrategy = LogPersistenceStrategy.Default
+    var folderMaxLimit: Int = Int.MAX_VALUE
+    var persistenceBuffer: Int = 50
+
+    @PublishedApi
+    internal fun check() = apply {
+        require(folderMaxLimit > 1) { "folderMaxLimit must be greater than 1" }
+    }
+}
+
+object FolderKLoggerContext {
+    class FolderKLoggerThreadContext(
+        val id: String,
+        val config: FolderKLoggerConfig
     ) {
+
+        var last: List<LogResult> = emptyList()
+        val buffer: MutableList<Any> = mutableListOf()
+        var countBuffer: Int = 0
+        var matchIndex: Int = 0
+        var matchFastFailed: Boolean = true
+
         fun resetMatch() {
             matchIndex = 0
             matchFastFailed = false
         }
+
+        inline fun clearFinal(flush: () -> Unit) {
+            if (matchFastFailed) {
+                last = buffer.map {
+                    if (it is LogBuffer) {
+                        it.asResult()
+                    } else {
+                        it as LogResult
+                    }
+                }
+                countBuffer = 0
+            } else {
+                countBuffer++
+                if (countBuffer >= config.folderMaxLimit) {
+                    flush()
+                }
+                if (countBuffer >= config.persistenceBuffer) {
+                    with(config.persistenceStrategy) {
+                        persistence()
+                    }
+                }
+            }
+            buffer.clear()
+        }
     }
 
-    val contextThreadLocal = InheritableThreadLocal<KLoggerThreadContext>()
+    val contextThreadLocal = InheritableThreadLocal<FolderKLoggerThreadContext>()
 }
 
-inline val KLogger.threadFolderContext: KLoggerThreadContext
-    get() = KLoggerContext.contextThreadLocal.get()
+inline val FolderKLogger.threadFolderContext: FolderKLoggerThreadContext
+    get() = FolderKLoggerContext.contextThreadLocal.get()
 
 const val foldTimesMdcKey = "FOLD_TIMES"
+const val foldIdMdcKey = "FOLD_ID"
 
-inline fun KLogger.withFolder(block: () -> Unit) {
-    val c0 = KLoggerContext.contextThreadLocal.get()
+inline fun FolderKLogger.folder(
+    id: String = Thread.currentThread().name,
+    configuration: FolderKLoggerConfig.() -> Unit = { },
+    block: () -> Unit
+) {
+    val c0 = FolderKLoggerContext.contextThreadLocal.get()
     val c = if (c0 == null) {
-        val c1 = KLoggerThreadContext(emptyList(), mutableListOf(), 0, 0, true)
-        KLoggerContext.contextThreadLocal.set(c1)
+        val c1 = FolderKLoggerThreadContext(id, FolderKLoggerConfig().apply(configuration).check())
+        FolderKLoggerContext.contextThreadLocal.set(c1)
         Runtime.getRuntime().addShutdownHook(Thread({
             withMdc {
                 flushBuffer()
@@ -66,19 +110,11 @@ inline fun KLogger.withFolder(block: () -> Unit) {
     try {
         block()
     } finally {
-        if (c.matchFastFailed) {
-            c.last = c.buffer.map {
-                if (it is LogBuffer) {
-                    it.asResult()
-                } else {
-                    it as LogResult
-                }
+        c.clearFinal {
+            withMdc {
+                flushLast()
             }
-            c.countBuffer = 0
-        } else {
-            c.countBuffer++
         }
-        c.buffer.clear()
     }
 }
 
@@ -241,16 +277,31 @@ fun levelOf(levelInt: Int): Level {
 
 @Deprecated("")
 interface MdcScope {
-    fun KLogger.flushLast() {
-        threadFolderContext.last.forEach {
+    /**
+     * 强制刷新上一次的记录信息
+     */
+    @OptIn(ExperimentalApi::class)
+    fun FolderKLogger.flushLast() {
+        val c = threadFolderContext
+        c.last.forEach {
             write(it)
+        }
+        c.last = emptyList()
+        c.countBuffer = 0
+        with(threadFolderContext) {
+            with(config.persistenceStrategy) {
+                clearPersistence()
+            }
         }
     }
 
-    fun KLogger.flushBuffer() {
+    /**
+     * 强制刷新掉buffer, 并且清空buffer
+     */
+    fun FolderKLogger.flushBuffer() {
         flushLast()
-
-        val buffer = threadFolderContext.buffer
+        val c = threadFolderContext
+        val buffer = c.buffer
         for (idx in buffer.indices) {
             val item = buffer[idx]
             val result = if (item is LogBuffer) {
@@ -260,23 +311,30 @@ interface MdcScope {
             }
             write(result)
         }
+
+        buffer.clear()
+
+        c.matchFastFailed = true
+        c.matchIndex = 0
     }
 
     @Deprecated("")
     companion object : MdcScope
 }
 
-fun KLogger.withMdc(block: MdcScope.() -> Unit) {
-    MDC.put(foldTimesMdcKey, "[x${threadFolderContext.countBuffer}]")
+fun FolderKLogger.withMdc(block: MdcScope.() -> Unit) {
+    MDC.put(foldTimesMdcKey, threadFolderContext.countBuffer.toString())
+    MDC.put(foldIdMdcKey, threadFolderContext.id)
     try {
         MdcScope.block()
     } finally {
         MDC.remove(foldTimesMdcKey)
+        MDC.remove(foldIdMdcKey)
     }
 }
 
-
-fun KLogger.write(result: LogResult) {
+@PublishedApi
+internal fun KLogger.write(result: LogResult) {
     val throwable = result.asThrowable()
     if (result.hasLazyLogResult()) {
         val msg = result.lazyLogResult.message
@@ -353,8 +411,8 @@ fun KLogger.write(result: LogResult) {
     }
 }
 
-
-fun KLogger.matchCache(logBuffer: LogBuffer): Boolean {
+@PublishedApi
+internal fun FolderKLogger.matchCache(logBuffer: LogBuffer): Boolean {
     val c = threadFolderContext
     if (c.matchFastFailed) {
         c.buffer.add(logBuffer)
@@ -366,7 +424,6 @@ fun KLogger.matchCache(logBuffer: LogBuffer): Boolean {
             flushBuffer()
         }
         c.buffer.add(logBuffer)
-        c.matchFastFailed = true
         return false
     }
     val result = logBuffer.asResult()
@@ -375,7 +432,6 @@ fun KLogger.matchCache(logBuffer: LogBuffer): Boolean {
         withMdc {
             flushBuffer()
         }
-        c.matchFastFailed = true
         return false
     }
     c.matchIndex++

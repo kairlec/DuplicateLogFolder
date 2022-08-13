@@ -28,3 +28,8 @@ message LogResult{
   }
   int32 level = 3;
 }
+
+message LogPersistence{
+  repeated LogResult log_results = 1;
+  int32 countBuffer = 2;
+}

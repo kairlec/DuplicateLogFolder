@@ -4,19 +4,22 @@ import mu.KLogger
 import mu.Marker
 import org.slf4j.event.Level
 
-fun KLogger.repeatLog(level: Level, t: Throwable?, msg: () -> Any?): Boolean {
+@PublishedApi
+internal fun FolderKLogger.repeatLog(level: Level, t: Throwable?, msg: () -> Any?): Boolean {
     return matchCache(LazyLogBuffer(level, t, msg))
 }
 
-fun KLogger.repeatLog(level: Level, t: Throwable?, format: String?, argArray: ArrayWrapper): Boolean {
+@PublishedApi
+internal fun FolderKLogger.repeatLog(level: Level, t: Throwable?, format: String?, argArray: ArrayWrapper): Boolean {
     return matchCache(ArgLogBuffer(level, t, format, argArray))
 }
 
-fun KLogger.repeatLog(level: Level, t: Throwable?, format: String?, argArray: Array<out Any?>? = null): Boolean {
+@PublishedApi
+internal fun FolderKLogger.repeatLog(level: Level, t: Throwable?, format: String?, argArray: Array<out Any?>? = null): Boolean {
     return matchCache(ArgLogBuffer(level, t, format, argArray?.let { ArrayWrapper(it, it.size) }))
 }
 
-class KLoggerAdapter(private val kLogger: KLogger) : KLogger by kLogger {
+class FolderKLogger(private val kLogger: KLogger) : KLogger by kLogger {
     override fun debug(msg: () -> Any?) {
         if (repeatLog(Level.DEBUG, null, msg)) {
             return
