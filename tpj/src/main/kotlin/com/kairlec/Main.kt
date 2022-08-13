@@ -6,7 +6,7 @@ private val log = KotlinLogging.foldLogger {}
 
 fun main() {
     repeat(5) {
-        log.withRepeatTimes(1) {
+        log.withFolder {
             repeat(3) {
                 log.warn { "abcd" }
             }

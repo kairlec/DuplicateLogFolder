@@ -1,9 +1,11 @@
-@file:Suppress("DEPRECATION", "UnusedReceiverParameter", "RemoveRedundantQualifierName", "unused",
+@file:Suppress(
+    "DEPRECATION", "UnusedReceiverParameter", "RemoveRedundantQualifierName", "unused",
     "MemberVisibilityCanBePrivate"
 )
 
 package com.kairlec
 
+import com.kairlec.KLoggerContext.KLoggerThreadContext
 import com.kairlec.log.*
 import mu.KLogger
 import mu.internal.ErrorMessageProducer
@@ -11,7 +13,6 @@ import org.slf4j.MDC
 import org.slf4j.event.Level
 import java.io.PrintStream
 import java.io.PrintWriter
-import java.util.concurrent.atomic.AtomicInteger
 
 
 data class MatchResult(
@@ -25,50 +26,59 @@ data class MatchResult(
 }
 
 object KLoggerContext {
-    val current = InheritableThreadLocal<Long>()
-    val last = InheritableThreadLocal<List<LogResult>>()
-    val buffer = InheritableThreadLocal<MutableList<Any>>()
-    val countBuffer = InheritableThreadLocal<AtomicInteger>()
-    val matchResult = InheritableThreadLocal<MatchResult>()
+    class KLoggerThreadContext(
+        var last: List<LogResult>,
+        val buffer: MutableList<Any>,
+        var countBuffer: Int,
+        var matchIndex: Int,
+        var matchFastFailed: Boolean
+    ) {
+        fun resetMatch() {
+            matchIndex = 0
+            matchFastFailed = false
+        }
+    }
+
+    val contextThreadLocal = InheritableThreadLocal<KLoggerThreadContext>()
 }
 
-const val RepeatTimesMdcKey = "REPEAT_TIMES"
+inline val KLogger.threadFolderContext: KLoggerThreadContext
+    get() = KLoggerContext.contextThreadLocal.get()
 
-inline fun KLogger.withRepeatTimes(id: Long, block: () -> Unit) {
-    KLoggerContext.current.set(id)
-    KLoggerContext.buffer.set(mutableListOf())
-    val result = KLoggerContext.matchResult.get()
-    if (result == null) {
-        KLoggerContext.countBuffer.set(AtomicInteger(0))
-        KLoggerContext.matchResult.set(MatchResult(failed = true))
-        KLoggerContext.last.set(emptyList())
-        Runtime.getRuntime().addShutdownHook(Thread {
+const val foldTimesMdcKey = "FOLD_TIMES"
+
+inline fun KLogger.withFolder(block: () -> Unit) {
+    val c0 = KLoggerContext.contextThreadLocal.get()
+    val c = if (c0 == null) {
+        val c1 = KLoggerThreadContext(emptyList(), mutableListOf(), 0, 0, true)
+        KLoggerContext.contextThreadLocal.set(c1)
+        Runtime.getRuntime().addShutdownHook(Thread({
             withMdc {
-                flushLast()
                 flushBuffer()
             }
-        })
+        }, "${Thread.currentThread().name}-log-folder"))
+        c1
     } else {
-        result.reset()
+        c0.resetMatch()
+        c0
     }
+
     try {
         block()
     } finally {
-        if (KLoggerContext.matchResult.get()?.failed == true) {
-            KLoggerContext.last.remove()
-            KLoggerContext.last.set(KLoggerContext.buffer.get().map {
+        if (c.matchFastFailed) {
+            c.last = c.buffer.map {
                 if (it is LogBuffer) {
                     it.asResult()
                 } else {
                     it as LogResult
                 }
-            })
-            KLoggerContext.countBuffer.get().set(0)
+            }
+            c.countBuffer = 0
         } else {
-            KLoggerContext.countBuffer.get().incrementAndGet()
+            c.countBuffer++
         }
-        KLoggerContext.current.remove()
-        KLoggerContext.buffer.remove()
+        c.buffer.clear()
     }
 }
 
@@ -232,7 +242,7 @@ fun levelOf(levelInt: Int): Level {
 @Deprecated("")
 interface MdcScope {
     fun KLogger.flushLast() {
-        KLoggerContext.last.get().forEach {
+        threadFolderContext.last.forEach {
             write(it)
         }
     }
@@ -240,7 +250,7 @@ interface MdcScope {
     fun KLogger.flushBuffer() {
         flushLast()
 
-        val buffer = KLoggerContext.buffer.get()
+        val buffer = threadFolderContext.buffer
         for (idx in buffer.indices) {
             val item = buffer[idx]
             val result = if (item is LogBuffer) {
@@ -256,12 +266,12 @@ interface MdcScope {
     companion object : MdcScope
 }
 
-inline fun KLogger.withMdc(block: MdcScope.() -> Unit) {
-    MDC.put(RepeatTimesMdcKey, "[x${KLoggerContext.countBuffer.get().get()}]")
+fun KLogger.withMdc(block: MdcScope.() -> Unit) {
+    MDC.put(foldTimesMdcKey, "[x${threadFolderContext.countBuffer}]")
     try {
         MdcScope.block()
     } finally {
-        MDC.remove(RepeatTimesMdcKey)
+        MDC.remove(foldTimesMdcKey)
     }
 }
 
@@ -345,30 +355,30 @@ fun KLogger.write(result: LogResult) {
 
 
 fun KLogger.matchCache(logBuffer: LogBuffer): Boolean {
-    val matchResult = KLoggerContext.matchResult.get()
-    if (matchResult.failed) {
-        KLoggerContext.buffer.get().add(logBuffer)
+    val c = threadFolderContext
+    if (c.matchFastFailed) {
+        c.buffer.add(logBuffer)
         return false
     }
-    val exists = KLoggerContext.last.get().getOrNull(matchResult.idx)
+    val exists = c.last.getOrNull(c.matchIndex)
     if (exists == null) {
         withMdc {
             flushBuffer()
         }
-        KLoggerContext.buffer.get().add(logBuffer)
-        matchResult.failed = true
+        c.buffer.add(logBuffer)
+        c.matchFastFailed = true
         return false
     }
     val result = logBuffer.asResult()
-    KLoggerContext.buffer.get().add(result)
+    c.buffer.add(result)
     if (!exists.sameTo(result)) {
         withMdc {
             flushBuffer()
         }
-        matchResult.failed = true
+        c.matchFastFailed = true
         return false
     }
-    matchResult.idx++
+    c.matchIndex++
     return true
 }
 

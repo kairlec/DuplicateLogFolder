@@ -1,15 +1,32 @@
+@file:Suppress("NOTHING_TO_INLINE")
+
 package com.kairlec
 
 import mu.KLogger
 import mu.KotlinLogging
+import mu.toKLogger
+import org.slf4j.Logger
 
-val KLogger.folder: KLogger
-    get() = if (this is KLoggerAdapter) {
+inline fun KLogger.asFolderLogger(): KLogger {
+    return if (this is KLoggerAdapter) {
         this
     } else {
         KLoggerAdapter(this)
     }
+}
 
-fun KotlinLogging.foldLogger(func: () -> Unit): KLogger {
-    return logger(func).folder
+inline fun KotlinLogging.foldLogger(noinline func: () -> Unit): KLogger {
+    return logger(func).asFolderLogger()
+}
+
+inline fun KotlinLogging.foldLogger(name: String): KLogger {
+    return logger(name).asFolderLogger()
+}
+
+inline fun KotlinLogging.foldLogger(underlyingLogger: Logger): KLogger {
+    return logger(underlyingLogger).asFolderLogger()
+}
+
+inline fun Logger.toFolderKLogger(): KLogger {
+    return toKLogger().asFolderLogger()
 }
