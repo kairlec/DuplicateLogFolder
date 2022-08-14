@@ -6,8 +6,18 @@ option java_package = "com.kairlec.log";
 option java_outer_classname = "LogProto";
 option java_multiple_files = true;
 
+import "google/protobuf/timestamp.proto";
+
+message ThrowableDelegate{
+  string class_name = 1;
+  optional string message = 2;
+  repeated bytes stack_trace = 3;
+  optional ThrowableDelegate cause = 4;
+  repeated ThrowableDelegate suppressed = 5;
+}
+
 message ArgLogResult{
-  optional string throwable_message = 1;
+  optional ThrowableDelegate throwable_delegate = 1;
   optional string format_message = 2;
   repeated ArgLogItem arg_messages = 3;
 }
@@ -17,7 +27,7 @@ message ArgLogItem{
 }
 
 message LazyLogResult{
-  optional string throwable_message = 1;
+  optional ThrowableDelegate throwable_delegate = 1;
   string message = 2;
 }
 
@@ -32,4 +42,5 @@ message LogResult{
 message LogPersistence{
   repeated LogResult log_results = 1;
   int32 countBuffer = 2;
+  google.protobuf.Timestamp timestamp = 3;
 }

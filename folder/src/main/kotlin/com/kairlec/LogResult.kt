@@ -11,8 +11,6 @@ import mu.KLogger
 import mu.internal.ErrorMessageProducer
 import org.slf4j.MDC
 import org.slf4j.event.Level
-import java.io.PrintStream
-import java.io.PrintWriter
 
 
 data class MatchResult(
@@ -42,7 +40,7 @@ object FolderKLoggerContext {
         val config: FolderKLoggerConfig
     ) {
 
-        var last: List<LogResult> = emptyList()
+        var last: List<RuntimeLogResultWrapper> = emptyList()
         val buffer: MutableList<Any> = mutableListOf()
         var countBuffer: Int = 0
         var matchIndex: Int = 0
@@ -59,7 +57,7 @@ object FolderKLoggerContext {
                     if (it is LogBuffer) {
                         it.asResult()
                     } else {
-                        it as LogResult
+                        it as RuntimeLogResultWrapper
                     }
                 }
                 countBuffer = 0
@@ -128,49 +126,34 @@ internal inline fun (() -> Any?).toStringSafe(): String {
 }
 
 sealed class LogBuffer {
-    abstract fun asResult(): LogResult
+    abstract fun asResult(): RuntimeLogResultWrapper
 }
 
-private class ThrowableWrapper(private val stackTraceMessage: String) : Throwable() {
-    override fun printStackTrace(s: PrintStream) {
-        s.print(stackTraceMessage)
+internal fun LogResult.asThrowable(): RuntimeThrowableDelegateWrapper? {
+    if (this.hasLazyLogResult() && this.lazyLogResult.hasThrowableDelegate()) {
+        return RuntimeThrowableDelegateWrapper.from(lazyLogResult.throwableDelegate)
     }
-
-    override fun printStackTrace(s: PrintWriter) {
-        s.print(stackTraceMessage)
-    }
-
-    override fun printStackTrace() {
-        System.err.println(stackTraceMessage)
-    }
-}
-
-fun LogResult.asThrowable(): Throwable? {
-    if (this.hasLazyLogResult() && this.lazyLogResult.hasThrowableMessage()) {
-        return ThrowableWrapper(this.lazyLogResult.throwableMessage)
-    }
-    if (this.hasArgLogResult() && this.argLogResult.hasThrowableMessage()) {
-        return ThrowableWrapper(this.argLogResult.throwableMessage)
+    if (this.hasArgLogResult() && this.argLogResult.hasThrowableDelegate()) {
+        return RuntimeThrowableDelegateWrapper.from(argLogResult.throwableDelegate)
     }
     return null
 }
-
 
 class LazyLogBuffer(
     val logLevel: Level,
     val t: Throwable?,
     val msg: () -> Any?
 ) : LogBuffer() {
-    override fun asResult(): LogResult {
-        return logResult {
+    override fun asResult(): RuntimeLogResultWrapper {
+        return RuntimeLogResultWrapper.from(logResult {
             this.level = logLevel.toInt()
             this.lazyLogResult = lazyLogResult {
-                t?.stackTraceToString()?.let {
-                    this.throwableMessage = it
+                t?.delegate()?.let {
+                    this.throwableDelegate = it
                 }
                 this.message = msg.toStringSafe()
             }
-        }
+        }, t)
     }
 }
 
@@ -180,12 +163,12 @@ class ArgLogBuffer(
     val format: String?,
     var argArray: ArrayWrapper?
 ) : LogBuffer() {
-    override fun asResult(): LogResult {
-        return logResult {
+    override fun asResult(): RuntimeLogResultWrapper {
+        return RuntimeLogResultWrapper.from(logResult {
             this.level = logLevel.toInt()
             this.argLogResult = argLogResult {
-                t?.stackTraceToString()?.let {
-                    this.throwableMessage = it
+                t?.delegate()?.let {
+                    this.throwableDelegate = it
                 }
                 format?.let {
                     this.formatMessage = it
@@ -198,7 +181,7 @@ class ArgLogBuffer(
                     }
                 }
             }
-        }
+        }, t)
     }
 }
 
@@ -222,21 +205,21 @@ fun LogResult.sameTo(other: LogResult, ignoreLevel: Boolean = false): Boolean {
 }
 
 fun LazyLogResult.sameTo(other: LazyLogResult): Boolean {
-    if (this.hasThrowableMessage()) {
-        if (!other.hasThrowableMessage()) {
+    if (this.hasThrowableDelegate()) {
+        if (!other.hasThrowableDelegate()) {
             return false
         }
-        return this.throwableMessage == other.throwableMessage
+        return this.throwableDelegate == other.throwableDelegate
     }
     return this.message == other.message
 }
 
 fun ArgLogResult.sameTo(other: ArgLogResult): Boolean {
-    if (this.hasThrowableMessage()) {
-        if (!other.hasThrowableMessage()) {
+    if (this.hasThrowableDelegate()) {
+        if (!other.hasThrowableDelegate()) {
             return false
         }
-        if (this.throwableMessage != other.throwableMessage) {
+        if (this.throwableDelegate != other.throwableDelegate) {
             return false
         }
     }
@@ -307,7 +290,7 @@ interface MdcScope {
             val result = if (item is LogBuffer) {
                 item.asResult().also { buffer[idx] = it }
             } else {
-                item as LogResult
+                item as RuntimeLogResultWrapper
             }
             write(result)
         }
@@ -334,8 +317,9 @@ fun FolderKLogger.withMdc(block: MdcScope.() -> Unit) {
 }
 
 @PublishedApi
-internal fun KLogger.write(result: LogResult) {
-    val throwable = result.asThrowable()
+internal fun KLogger.write(resultWrapper: RuntimeLogResultWrapper) {
+    val result = resultWrapper.logResult
+    val throwable = resultWrapper.rawThrowable ?: result.asThrowable()?.asThrowable()
     if (result.hasLazyLogResult()) {
         val msg = result.lazyLogResult.message
         when (levelOf(result.level)) {
@@ -428,7 +412,7 @@ internal fun FolderKLogger.matchCache(logBuffer: LogBuffer): Boolean {
     }
     val result = logBuffer.asResult()
     c.buffer.add(result)
-    if (!exists.sameTo(result)) {
+    if (!exists.logResult.sameTo(result.logResult)) {
         withMdc {
             flushBuffer()
         }
