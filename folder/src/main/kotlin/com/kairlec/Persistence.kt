@@ -74,27 +74,27 @@ interface LogPersistenceStrategy {
 
     object Default : LogPersistenceStrategy {
         override fun FolderKLoggerThreadContext.persistence() {
-            asyncPersistenceExecutor.submit {
-                this.save()
-            }
-        }
-
-        @ExperimentalApi
-        override fun FolderKLoggerThreadContext.clearPersistence() {
-            asyncPersistenceExecutor.submit {
-                this.removeSave()
-            }
-        }
-    }
-
-    object Sync : LogPersistenceStrategy {
-        override fun FolderKLoggerThreadContext.persistence() {
             this.save()
         }
 
         @ExperimentalApi
         override fun FolderKLoggerThreadContext.clearPersistence() {
             this.removeSave()
+        }
+    }
+
+    object Async : LogPersistenceStrategy {
+        override fun FolderKLoggerThreadContext.persistence() {
+            asyncPersistenceExecutor.execute {
+                this.save()
+            }
+        }
+
+        @ExperimentalApi
+        override fun FolderKLoggerThreadContext.clearPersistence() {
+            asyncPersistenceExecutor.execute {
+                this.removeSave()
+            }
         }
     }
 
