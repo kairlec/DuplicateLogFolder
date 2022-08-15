@@ -46,35 +46,44 @@ object FolderKLoggerContext {
         val buffer: MutableList<Any> = mutableListOf()
         var countBuffer: Int = 0
         var matchIndex: Int = 0
-        var matchFastFailed: Boolean = true
+        var matchFastFailed: Boolean? = true
 
         fun resetMatch() {
             matchIndex = 0
-            matchFastFailed = false
+            matchFastFailed = null
         }
 
         inline fun clearFinal(flush: () -> Unit) {
-            if (matchFastFailed) {
-                last = buffer.map {
-                    if (it is LogBuffer) {
-                        it.asResult()
-                    } else {
-                        it as RuntimeLogResultWrapper
+            when (matchFastFailed) {
+                true -> {
+                    last = buffer.map {
+                        if (it is LogBuffer) {
+                            it.asResult()
+                        } else {
+                            it as RuntimeLogResultWrapper
+                        }
+                    }
+                    countBuffer = 0
+                }
+
+                false -> {
+                    countBuffer++
+                    last.forEach {
+                        it.written = false
+                    }
+                    if (countBuffer >= config.folderMaxLimit) {
+                        flush()
+                    }
+                    if (countBuffer >= config.persistenceBuffer) {
+                        with(config.persistenceStrategy) {
+                            persistence()
+                        }
                     }
                 }
-                countBuffer = 0
-            } else {
-                countBuffer++
-                last.forEach {
-                    it.written = false
-                }
-                if (countBuffer >= config.folderMaxLimit) {
+
+                else -> {
+                    // 这一轮没有数据
                     flush()
-                }
-                if (countBuffer >= config.persistenceBuffer) {
-                    with(config.persistenceStrategy) {
-                        persistence()
-                    }
                 }
             }
             buffer.clear()
@@ -423,7 +432,7 @@ internal fun KLogger.write(resultWrapper: RuntimeLogResultWrapper) {
 @PublishedApi
 internal fun FolderKLogger.matchCache(logBuffer: LogBuffer): Boolean {
     val c = FolderKLoggerContext.contextThreadLocal.get() ?: return false
-    if (c.matchFastFailed) {
+    if (c.matchFastFailed == true) {
         // fast fail 是前面已经flush过了,这里不需要flush
         c.buffer.add(logBuffer)
         logBuffer.written = true
@@ -450,6 +459,7 @@ internal fun FolderKLogger.matchCache(logBuffer: LogBuffer): Boolean {
         result.written = true
         return false
     }
+    c.matchFastFailed = false
     c.buffer.add(result)
     c.matchIndex++
     return true
