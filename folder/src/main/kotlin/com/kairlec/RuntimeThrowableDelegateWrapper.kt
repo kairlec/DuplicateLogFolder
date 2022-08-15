@@ -4,6 +4,7 @@ import com.kairlec.log.LogResult
 import com.kairlec.log.ThrowableDelegate
 import com.kairlec.log.causeOrNull
 import com.kairlec.log.throwableDelegate
+import mu.KotlinLogging
 
 internal class RuntimeThrowableDelegateWrapper private constructor(
     private val throwable: Throwable?,
@@ -26,6 +27,7 @@ class RuntimeLogResultWrapper private constructor(
     val logResult: LogResult,
     val rawThrowable: Throwable?
 ) {
+    var written: Boolean = false
     companion object {
         fun from(logResult: LogResult, rawThrowable: Throwable?): RuntimeLogResultWrapper {
             return RuntimeLogResultWrapper(logResult, rawThrowable)

@@ -63,6 +63,9 @@ object FolderKLoggerContext {
                 countBuffer = 0
             } else {
                 countBuffer++
+                last.forEach {
+                    it.written = false
+                }
                 if (countBuffer >= config.folderMaxLimit) {
                     flush()
                 }
@@ -125,7 +128,7 @@ internal inline fun (() -> Any?).toStringSafe(): String {
     }
 }
 
-sealed class LogBuffer {
+sealed class LogBuffer(var written: Boolean) {
     abstract fun asResult(): RuntimeLogResultWrapper
 }
 
@@ -140,10 +143,11 @@ internal fun LogResult.asThrowable(): RuntimeThrowableDelegateWrapper? {
 }
 
 class LazyLogBuffer(
+    written: Boolean,
     val logLevel: Level,
     val t: Throwable?,
     val msg: () -> Any?
-) : LogBuffer() {
+) : LogBuffer(written) {
     override fun asResult(): RuntimeLogResultWrapper {
         return RuntimeLogResultWrapper.from(logResult {
             this.level = logLevel.toInt()
@@ -153,16 +157,17 @@ class LazyLogBuffer(
                 }
                 this.message = msg.toStringSafe()
             }
-        }, t)
+        }, t).also { it.written = this.written }
     }
 }
 
 class ArgLogBuffer(
+    written: Boolean,
     val logLevel: Level,
     val t: Throwable?,
     val format: String?,
     var argArray: ArrayWrapper?
-) : LogBuffer() {
+) : LogBuffer(written) {
     override fun asResult(): RuntimeLogResultWrapper {
         return RuntimeLogResultWrapper.from(logResult {
             this.level = logLevel.toInt()
@@ -181,7 +186,7 @@ class ArgLogBuffer(
                     }
                 }
             }
-        }, t)
+        }, t).also { it.written = this.written }
     }
 }
 
@@ -266,6 +271,8 @@ interface MdcScope {
     @OptIn(ExperimentalApi::class)
     fun FolderKLogger.flushLast() {
         val c = threadFolderContext
+        MDC.put(foldTimesMdcKey, c.countBuffer.toString())
+        MDC.put(foldIdMdcKey, c.id)
         c.last.forEach {
             write(it)
         }
@@ -284,6 +291,8 @@ interface MdcScope {
     fun FolderKLogger.flushBuffer() {
         flushLast()
         val c = threadFolderContext
+        MDC.remove(foldTimesMdcKey)
+        MDC.remove(foldIdMdcKey)
         val buffer = c.buffer
         for (idx in buffer.indices) {
             val item = buffer[idx]
@@ -306,8 +315,6 @@ interface MdcScope {
 }
 
 fun FolderKLogger.withMdc(block: MdcScope.() -> Unit) {
-    MDC.put(foldTimesMdcKey, threadFolderContext.countBuffer.toString())
-    MDC.put(foldIdMdcKey, threadFolderContext.id)
     try {
         MdcScope.block()
     } finally {
@@ -318,6 +325,10 @@ fun FolderKLogger.withMdc(block: MdcScope.() -> Unit) {
 
 @PublishedApi
 internal fun KLogger.write(resultWrapper: RuntimeLogResultWrapper) {
+    if (resultWrapper.written) {
+        return
+    }
+    resultWrapper.written = true
     val result = resultWrapper.logResult
     val throwable = resultWrapper.rawThrowable ?: result.asThrowable()?.asThrowable()
     if (result.hasLazyLogResult()) {
@@ -399,25 +410,33 @@ internal fun KLogger.write(resultWrapper: RuntimeLogResultWrapper) {
 internal fun FolderKLogger.matchCache(logBuffer: LogBuffer): Boolean {
     val c = threadFolderContext
     if (c.matchFastFailed) {
+        // fast fail 是前面已经flush过了,这里不需要flush
         c.buffer.add(logBuffer)
+        logBuffer.written = true
         return false
     }
     val exists = c.last.getOrNull(c.matchIndex)
     if (exists == null) {
+        // 超出了原来的匹配界限,这里直接刷新缓冲区
         withMdc {
             flushBuffer()
         }
+        // 老的缓冲区已经写出了,这里返回false的匹配,日志会直接输出的,所以这里需要设置written标记为true,防止下次刷新缓冲区的时候多次输出
         c.buffer.add(logBuffer)
+        logBuffer.written = true
         return false
     }
     val result = logBuffer.asResult()
-    c.buffer.add(result)
     if (!exists.logResult.sameTo(result.logResult)) {
         withMdc {
             flushBuffer()
         }
+        c.buffer.add(result)
+        logBuffer.written = true
+        result.written = true
         return false
     }
+    c.buffer.add(result)
     c.matchIndex++
     return true
 }
