@@ -3,6 +3,9 @@
 package com.kairlec
 
 import com.google.protobuf.timestamp
+import com.kairlec.FoldMdcKeys.foldFormatKey
+import com.kairlec.FoldMdcKeys.foldIdMdcKey
+import com.kairlec.FoldMdcKeys.foldTimesMdcKey
 import com.kairlec.FolderKLoggerContext.FolderKLoggerThreadContext
 import com.kairlec.log.LogPersistence
 import com.kairlec.log.logPersistence
@@ -12,7 +15,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
 import java.time.ZoneId
-import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.*
 import java.util.concurrent.TimeUnit.MINUTES
@@ -147,6 +149,7 @@ interface LogPersistenceStrategy {
                     log.warn { "log of dump id [${it.fileName}] persist at $time" }
                     MDC.put(foldTimesMdcKey, persistence.countBuffer.toString())
                     MDC.put(foldIdMdcKey, it.fileName.toString())
+                    MDC.put(foldFormatKey, " [${it.fileName}, x${persistence.countBuffer}]")
                     try {
                         persistence.logResultsList.forEach { lgr ->
                             log.write(RuntimeLogResultWrapper.from(lgr, null))
@@ -154,6 +157,7 @@ interface LogPersistenceStrategy {
                     } finally {
                         MDC.remove(foldTimesMdcKey)
                         MDC.remove(foldIdMdcKey)
+                        MDC.remove(foldFormatKey)
                     }
                     it.deleteIfExists()
                 }

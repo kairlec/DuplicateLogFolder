@@ -5,6 +5,8 @@
 
 package com.kairlec
 
+import com.kairlec.FoldMdcKeys.clearFoldMdc
+import com.kairlec.FoldMdcKeys.setFoldMdc
 import com.kairlec.FolderKLoggerContext.FolderKLoggerThreadContext
 import com.kairlec.log.*
 import mu.KLogger
@@ -85,8 +87,23 @@ object FolderKLoggerContext {
 inline val FolderKLogger.threadFolderContext: FolderKLoggerThreadContext
     get() = FolderKLoggerContext.contextThreadLocal.get()
 
-const val foldTimesMdcKey = "FOLD_TIMES"
-const val foldIdMdcKey = "FOLD_ID"
+object FoldMdcKeys {
+    const val foldTimesMdcKey = "FOLD_TIMES"
+    const val foldIdMdcKey = "FOLD_ID"
+    const val foldFormatKey = "FOLD_FORMAT"
+
+    fun FolderKLoggerThreadContext.setFoldMdc() {
+        MDC.put(foldIdMdcKey, this.id)
+        MDC.put(foldTimesMdcKey, this.countBuffer.toString())
+        MDC.put(foldFormatKey, " [${this.id}, x${this.countBuffer}]")
+    }
+
+    fun FolderKLoggerThreadContext.clearFoldMdc() {
+        MDC.remove(foldIdMdcKey)
+        MDC.remove(foldTimesMdcKey)
+        MDC.remove(foldFormatKey)
+    }
+}
 
 inline fun FolderKLogger.folder(
     id: String = Thread.currentThread().name,
@@ -271,8 +288,7 @@ interface MdcScope {
     @OptIn(ExperimentalApi::class)
     fun FolderKLogger.flushLast() {
         val c = threadFolderContext
-        MDC.put(foldTimesMdcKey, c.countBuffer.toString())
-        MDC.put(foldIdMdcKey, c.id)
+        c.setFoldMdc()
         c.last.forEach {
             write(it)
         }
@@ -283,6 +299,7 @@ interface MdcScope {
                 clearPersistence()
             }
         }
+        c.clearFoldMdc()
     }
 
     /**
@@ -291,8 +308,6 @@ interface MdcScope {
     fun FolderKLogger.flushBuffer() {
         flushLast()
         val c = threadFolderContext
-        MDC.remove(foldTimesMdcKey)
-        MDC.remove(foldIdMdcKey)
         val buffer = c.buffer
         for (idx in buffer.indices) {
             val item = buffer[idx]
@@ -318,8 +333,7 @@ fun FolderKLogger.withMdc(block: MdcScope.() -> Unit) {
     try {
         MdcScope.block()
     } finally {
-        MDC.remove(foldTimesMdcKey)
-        MDC.remove(foldIdMdcKey)
+        threadFolderContext.clearFoldMdc()
     }
 }
 

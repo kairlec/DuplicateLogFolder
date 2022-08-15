@@ -1,7 +1,7 @@
 <configuration>
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} [%thread]%replace( [%X{FOLD_ID}, x%X{FOLD_TIMES}]){' \[, x\]', ''} %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} [%thread]%X{FOLD_FORMAT:-} %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
