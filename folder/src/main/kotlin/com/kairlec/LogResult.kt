@@ -1,5 +1,5 @@
 @file:Suppress(
-    "DEPRECATION", "UnusedReceiverParameter", "RemoveRedundantQualifierName", "unused",
+    "UnusedReceiverParameter", "RemoveRedundantQualifierName", "unused",
     "MemberVisibilityCanBePrivate"
 )
 
@@ -7,12 +7,12 @@ package com.kairlec
 
 import com.kairlec.FoldMdcKeys.clearFoldMdc
 import com.kairlec.FoldMdcKeys.setFoldMdc
-import com.kairlec.FolderKLoggerContext.FolderKLoggerThreadContext
+import com.kairlec.FolderKLoggerContexts.FolderKLoggerContext
+import com.kairlec.FolderKLoggerContexts.currentLogFolderId
 import com.kairlec.log.*
-import mu.KLogger
-import mu.internal.ErrorMessageProducer
+import mu.KotlinLogging
 import org.slf4j.MDC
-import org.slf4j.event.Level
+import java.util.concurrent.ConcurrentHashMap
 
 
 data class MatchResult(
@@ -36,9 +36,22 @@ class FolderKLoggerConfig {
     }
 }
 
-object FolderKLoggerContext {
-    class FolderKLoggerThreadContext(
-        val id: String,
+object FolderKLoggerContexts {
+    private val contextMap by lazy {
+        ConcurrentHashMap<Long, FolderKLoggerContext>().also {
+            Runtime.getRuntime().addShutdownHook(Thread({
+                it.values.forEach { context ->
+                    context.withMdc {
+                        log.flushBuffer()
+                    }
+                }
+            }, "log-folder-clear"))
+        }
+    }
+    private val log = KotlinLogging.foldLogger { }
+
+    class FolderKLoggerContext(
+        val id: Long,
         val config: FolderKLoggerConfig
     ) {
 
@@ -53,7 +66,7 @@ object FolderKLoggerContext {
             matchFastFailed = null
         }
 
-        inline fun clearFinal(flush: () -> Unit) {
+        inline fun clearFinal(flush: FolderKLoggerContext.() -> Unit) {
             when (matchFastFailed) {
                 true -> {
                     last = buffer.map {
@@ -90,24 +103,38 @@ object FolderKLoggerContext {
         }
     }
 
-    val contextThreadLocal = InheritableThreadLocal<FolderKLoggerThreadContext>()
-}
+    operator fun set(id: Long, context: FolderKLoggerContext) {
+        contextMap[id] = context
+    }
 
-inline val FolderKLogger.threadFolderContext: FolderKLoggerThreadContext
-    get() = FolderKLoggerContext.contextThreadLocal.get()
+    operator fun get(id: Long): FolderKLoggerContext? {
+        return contextMap[id]
+    }
+
+    @PublishedApi
+    internal val currentLogFolderId = InheritableThreadLocal<Long>()
+
+    val currentThreadFolderContext get() = currentLogFolderId.get()?.let { contextMap[it] }
+}
 
 object FoldMdcKeys {
     const val foldTimesMdcKey = "FOLD_TIMES"
     const val foldIdMdcKey = "FOLD_ID"
     const val foldFormatKey = "FOLD_FORMAT"
 
-    fun FolderKLoggerThreadContext.setFoldMdc() {
-        MDC.put(foldIdMdcKey, this.id)
+    fun FolderKLoggerContext.setFoldMdc() {
+        MDC.put(foldIdMdcKey, this.id.toString())
         MDC.put(foldTimesMdcKey, this.countBuffer.toString())
         MDC.put(foldFormatKey, " [${this.id}, x${this.countBuffer}]")
     }
 
-    fun FolderKLoggerThreadContext.clearFoldMdc() {
+    fun setFoldMdc(id: Long, times: Int) {
+        MDC.put(foldIdMdcKey, id.toString())
+        MDC.put(foldTimesMdcKey, times.toString())
+        MDC.put(foldFormatKey, " [${id}, x${times}]")
+    }
+
+    fun clearFoldMdc() {
         MDC.remove(foldIdMdcKey)
         MDC.remove(foldTimesMdcKey)
         MDC.remove(foldFormatKey)
@@ -115,25 +142,15 @@ object FoldMdcKeys {
 }
 
 inline fun FolderKLogger.folder(
-    id: String = Thread.currentThread().name,
+    id: Long = Thread.currentThread().id,
     configuration: FolderKLoggerConfig.() -> Unit = { },
     block: () -> Unit
 ) {
-    val c0 = FolderKLoggerContext.contextThreadLocal.get()
-    val c = if (c0 == null) {
-        val c1 = FolderKLoggerThreadContext(id, FolderKLoggerConfig().apply(configuration).check())
-        FolderKLoggerContext.contextThreadLocal.set(c1)
-        Runtime.getRuntime().addShutdownHook(Thread({
-            withMdc {
-                flushBuffer()
-            }
-        }, "${Thread.currentThread().name}-log-folder"))
-        c1
-    } else {
-        c0.resetMatch()
-        c0
-    }
-
+    currentLogFolderId.set(id)
+    val c = FolderKLoggerContexts[id]?.apply { resetMatch() }
+        ?: FolderKLoggerContext(id, FolderKLoggerConfig().apply { configuration() }.check()).also {
+            FolderKLoggerContexts[id] = it
+        }
     try {
         block()
     } finally {
@@ -142,173 +159,29 @@ inline fun FolderKLogger.folder(
                 flushLast()
             }
         }
+        currentLogFolderId.remove()
     }
 }
 
-@Suppress("NOTHING_TO_INLINE")
-internal inline fun (() -> Any?).toStringSafe(): String {
-    return try {
-        invoke().toString()
-    } catch (e: Exception) {
-        ErrorMessageProducer.getErrorLog(e)
-    }
-}
 
-sealed class LogBuffer(var written: Boolean) {
-    abstract fun asResult(): RuntimeLogResultWrapper
-}
-
-internal fun LogResult.asThrowable(): RuntimeThrowableDelegateWrapper? {
-    if (this.hasLazyLogResult() && this.lazyLogResult.hasThrowableDelegate()) {
-        return RuntimeThrowableDelegateWrapper.from(lazyLogResult.throwableDelegate)
-    }
-    if (this.hasArgLogResult() && this.argLogResult.hasThrowableDelegate()) {
-        return RuntimeThrowableDelegateWrapper.from(argLogResult.throwableDelegate)
-    }
-    return null
-}
-
-class LazyLogBuffer(
-    written: Boolean,
-    val logLevel: Level,
-    val t: Throwable?,
-    val msg: () -> Any?
-) : LogBuffer(written) {
-    override fun asResult(): RuntimeLogResultWrapper {
-        return RuntimeLogResultWrapper.from(logResult {
-            this.level = logLevel.toInt()
-            this.lazyLogResult = lazyLogResult {
-                t?.delegate()?.let {
-                    this.throwableDelegate = it
-                }
-                this.message = msg.toStringSafe()
-            }
-        }, t).also { it.written = this.written }
-    }
-}
-
-class ArgLogBuffer(
-    written: Boolean,
-    val logLevel: Level,
-    val t: Throwable?,
-    val format: String?,
-    var argArray: ArrayWrapper?
-) : LogBuffer(written) {
-    override fun asResult(): RuntimeLogResultWrapper {
-        return RuntimeLogResultWrapper.from(logResult {
-            this.level = logLevel.toInt()
-            this.argLogResult = argLogResult {
-                t?.delegate()?.let {
-                    this.throwableDelegate = it
-                }
-                format?.let {
-                    this.formatMessage = it
-                }
-                argArray?.let { args ->
-                    repeat(args.newSize) {
-                        this.argMessages.add(argLogItem {
-                            this.argMessageItem = args.array[it].toString()
-                        })
-                    }
-                }
-            }
-        }, t).also { it.written = this.written }
-    }
-}
-
-fun LogResult.sameTo(other: LogResult, ignoreLevel: Boolean = false): Boolean {
-    if (!ignoreLevel && this.level != other.level) {
-        return false
-    }
-    if (this.hasArgLogResult()) {
-        if (!other.hasArgLogResult()) {
-            return false
-        }
-        return this.argLogResult.sameTo(other.argLogResult)
-    }
-    if (this.hasLazyLogResult()) {
-        if (!other.hasLazyLogResult()) {
-            return false
-        }
-        return this.lazyLogResult.sameTo(other.lazyLogResult)
-    }
-    return false
-}
-
-fun LazyLogResult.sameTo(other: LazyLogResult): Boolean {
-    if (this.hasThrowableDelegate()) {
-        if (!other.hasThrowableDelegate()) {
-            return false
-        }
-        return this.throwableDelegate == other.throwableDelegate
-    }
-    return this.message == other.message
-}
-
-fun ArgLogResult.sameTo(other: ArgLogResult): Boolean {
-    if (this.hasThrowableDelegate()) {
-        if (!other.hasThrowableDelegate()) {
-            return false
-        }
-        if (this.throwableDelegate != other.throwableDelegate) {
-            return false
-        }
-    }
-    if (this.hasFormatMessage()) {
-        if (!other.hasFormatMessage()) {
-            return false
-        }
-        if (this.formatMessage != other.formatMessage) {
-            return false
-        }
-    }
-    if (this.argMessagesCount != other.argMessagesCount) {
-        return false
-    }
-    for (i in 0 until this.argMessagesCount) {
-        if (!this.argMessagesList[i].sameTo(other.argMessagesList[i])) {
-            return false
-        }
-    }
-    return true
-}
-
-fun ArgLogItem.sameTo(other: ArgLogItem): Boolean {
-    if (this.hasArgMessageItem()) {
-        if (!other.hasArgMessageItem()) {
-            return false
-        }
-        if (this.argMessageItem != other.argMessageItem) {
-            return false
-        }
-    }
-    return true
-}
-
-fun levelOf(levelInt: Int): Level {
-    return Level.values().first { it.toInt() == levelInt }
-}
-
-@Deprecated("")
-interface MdcScope {
+class MdcScope(private val c: FolderKLoggerContext) {
     /**
      * 强制刷新上一次的记录信息
      */
     @OptIn(ExperimentalApi::class)
     fun FolderKLogger.flushLast() {
-        val c = threadFolderContext
         c.setFoldMdc()
         c.last.forEach {
             write(it)
         }
         c.last = emptyList()
         c.countBuffer = 0
-        with(threadFolderContext) {
+        with(c) {
             with(config.persistenceStrategy) {
                 clearPersistence()
             }
         }
-        c.clearFoldMdc()
+        clearFoldMdc()
     }
 
     /**
@@ -316,7 +189,6 @@ interface MdcScope {
      */
     fun FolderKLogger.flushBuffer() {
         flushLast()
-        val c = threadFolderContext
         val buffer = c.buffer
         for (idx in buffer.indices) {
             val item = buffer[idx]
@@ -333,115 +205,30 @@ interface MdcScope {
         c.matchFastFailed = true
         c.matchIndex = 0
     }
-
-    @Deprecated("")
-    companion object : MdcScope
 }
 
-fun FolderKLogger.withMdc(block: MdcScope.() -> Unit) {
+inline fun FolderKLoggerContext.withMdc(block: MdcScope.() -> Unit) {
     try {
-        MdcScope.block()
+        MdcScope(this).block()
     } finally {
-        threadFolderContext.clearFoldMdc()
-    }
-}
-
-@PublishedApi
-internal fun KLogger.write(resultWrapper: RuntimeLogResultWrapper) {
-    if (resultWrapper.written) {
-        return
-    }
-    resultWrapper.written = true
-    val result = resultWrapper.logResult
-    val throwable = resultWrapper.rawThrowable ?: result.asThrowable()?.asThrowable()
-    if (result.hasLazyLogResult()) {
-        val msg = result.lazyLogResult.message
-        when (levelOf(result.level)) {
-            Level.TRACE -> if (underlyingLogger.isTraceEnabled) {
-                underlyingLogger.trace(msg, throwable)
-            }
-
-            Level.DEBUG -> if (underlyingLogger.isDebugEnabled) {
-                underlyingLogger.debug(msg, throwable)
-            }
-
-            Level.INFO -> if (underlyingLogger.isInfoEnabled) {
-                underlyingLogger.info(msg, throwable)
-            }
-
-            Level.WARN -> if (underlyingLogger.isWarnEnabled) {
-                underlyingLogger.warn(msg, throwable)
-            }
-
-            Level.ERROR -> if (underlyingLogger.isErrorEnabled) {
-                underlyingLogger.error(msg, throwable)
-            }
-        }
-    } else {
-        val format = result.argLogResult.formatMessage
-        val args =
-            result.argLogResult.argMessagesList.map { if (it.hasArgMessageItem()) it.argMessageItem else null }
-        if (throwable != null) {
-            when (levelOf(result.level)) {
-                Level.TRACE -> if (underlyingLogger.isTraceEnabled) {
-                    underlyingLogger.trace(format, args.toTypedArray(), throwable)
-                }
-
-                Level.DEBUG -> if (underlyingLogger.isDebugEnabled) {
-                    underlyingLogger.debug(format, args.toTypedArray(), throwable)
-                }
-
-                Level.INFO -> if (underlyingLogger.isInfoEnabled) {
-                    underlyingLogger.info(format, args.toTypedArray(), throwable)
-                }
-
-                Level.WARN -> if (underlyingLogger.isWarnEnabled) {
-                    underlyingLogger.warn(format, args.toTypedArray(), throwable)
-                }
-
-                Level.ERROR -> if (underlyingLogger.isErrorEnabled) {
-                    underlyingLogger.error(format, args.toTypedArray(), throwable)
-                }
-            }
-        } else {
-            when (levelOf(result.level)) {
-                Level.TRACE -> if (underlyingLogger.isTraceEnabled) {
-                    underlyingLogger.trace(format, args.toTypedArray())
-                }
-
-                Level.DEBUG -> if (underlyingLogger.isDebugEnabled) {
-                    underlyingLogger.debug(format, args.toTypedArray())
-                }
-
-                Level.INFO -> if (underlyingLogger.isInfoEnabled) {
-                    underlyingLogger.info(format, args.toTypedArray())
-                }
-
-                Level.WARN -> if (underlyingLogger.isWarnEnabled) {
-                    underlyingLogger.warn(format, args.toTypedArray())
-                }
-
-                Level.ERROR -> if (underlyingLogger.isErrorEnabled) {
-                    underlyingLogger.error(format, args.toTypedArray())
-                }
-            }
-        }
+        clearFoldMdc()
     }
 }
 
 @PublishedApi
 internal fun FolderKLogger.matchCache(logBuffer: LogBuffer): Boolean {
-    val c = FolderKLoggerContext.contextThreadLocal.get() ?: return false
+    val c = FolderKLoggerContexts.currentThreadFolderContext ?: return false
     if (c.matchFastFailed == true) {
         // fast fail 是前面已经flush过了,这里不需要flush
         c.buffer.add(logBuffer)
         logBuffer.written = true
         return false
     }
+    c.matchFastFailed = false
     val exists = c.last.getOrNull(c.matchIndex)
     if (exists == null) {
         // 超出了原来的匹配界限,这里直接刷新缓冲区
-        withMdc {
+        c.withMdc {
             flushBuffer()
         }
         // 老的缓冲区已经写出了,这里返回false的匹配,日志会直接输出的,所以这里需要设置written标记为true,防止下次刷新缓冲区的时候多次输出
@@ -451,7 +238,7 @@ internal fun FolderKLogger.matchCache(logBuffer: LogBuffer): Boolean {
     }
     val result = logBuffer.asResult()
     if (!exists.logResult.sameTo(result.logResult)) {
-        withMdc {
+        c.withMdc {
             flushBuffer()
         }
         c.buffer.add(result)
@@ -459,7 +246,6 @@ internal fun FolderKLogger.matchCache(logBuffer: LogBuffer): Boolean {
         result.written = true
         return false
     }
-    c.matchFastFailed = false
     c.buffer.add(result)
     c.matchIndex++
     return true

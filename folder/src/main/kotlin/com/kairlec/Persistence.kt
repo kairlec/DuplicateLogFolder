@@ -6,7 +6,7 @@ import com.google.protobuf.timestamp
 import com.kairlec.FoldMdcKeys.foldFormatKey
 import com.kairlec.FoldMdcKeys.foldIdMdcKey
 import com.kairlec.FoldMdcKeys.foldTimesMdcKey
-import com.kairlec.FolderKLoggerContext.FolderKLoggerThreadContext
+import com.kairlec.FolderKLoggerContexts.FolderKLoggerContext
 import com.kairlec.log.LogPersistence
 import com.kairlec.log.logPersistence
 import mu.KotlinLogging
@@ -24,17 +24,17 @@ import kotlin.io.path.deleteIfExists
 import kotlin.math.max
 
 @ExperimentalApi
-internal fun FolderKLoggerThreadContext.saveTo(directory: Path) {
-    saveAs(directory.resolve(id))
+internal fun FolderKLoggerContext.saveTo(directory: Path) {
+    saveAs(directory.resolve(id.toString()))
 }
 
 @ExperimentalApi
-internal fun FolderKLoggerThreadContext.removeSaveTo(directory: Path) {
-    removeSaveAs(directory.resolve(id))
+internal fun FolderKLoggerContext.removeSaveTo(directory: Path) {
+    removeSaveAs(directory.resolve(id.toString()))
 }
 
 @ExperimentalApi
-fun FolderKLoggerThreadContext.saveAs(file: Path) {
+fun FolderKLoggerContext.saveAs(file: Path) {
     if (Files.notExists(file.parent)) {
         Files.createDirectories(file.parent)
     }
@@ -54,46 +54,46 @@ fun FolderKLoggerThreadContext.saveAs(file: Path) {
 }
 
 @ExperimentalApi
-fun FolderKLoggerThreadContext.removeSaveAs(file: Path) {
+fun FolderKLoggerContext.removeSaveAs(file: Path) {
     file.deleteIfExists()
 }
 
 @OptIn(ExperimentalApi::class)
-fun FolderKLoggerThreadContext.save() {
+fun FolderKLoggerContext.save() {
     saveTo(LogPersistenceStrategy.persistenceDir)
 }
 
 @ExperimentalApi
-fun FolderKLoggerThreadContext.removeSave() {
+fun FolderKLoggerContext.removeSave() {
     removeSaveTo(LogPersistenceStrategy.persistenceDir)
 }
 
 interface LogPersistenceStrategy {
-    fun FolderKLoggerThreadContext.persistence()
+    fun FolderKLoggerContext.persistence()
 
     @ExperimentalApi
-    fun FolderKLoggerThreadContext.clearPersistence()
+    fun FolderKLoggerContext.clearPersistence()
 
     object Default : LogPersistenceStrategy {
-        override fun FolderKLoggerThreadContext.persistence() {
+        override fun FolderKLoggerContext.persistence() {
             this.save()
         }
 
         @ExperimentalApi
-        override fun FolderKLoggerThreadContext.clearPersistence() {
+        override fun FolderKLoggerContext.clearPersistence() {
             this.removeSave()
         }
     }
 
     object Async : LogPersistenceStrategy {
-        override fun FolderKLoggerThreadContext.persistence() {
+        override fun FolderKLoggerContext.persistence() {
             asyncPersistenceExecutor.execute {
                 this.save()
             }
         }
 
         @ExperimentalApi
-        override fun FolderKLoggerThreadContext.clearPersistence() {
+        override fun FolderKLoggerContext.clearPersistence() {
             asyncPersistenceExecutor.execute {
                 this.removeSave()
             }
@@ -168,12 +168,12 @@ interface LogPersistenceStrategy {
         @ExperimentalApi
         fun saveAs(file: Path): LogPersistenceStrategy {
             return object : LogPersistenceStrategy {
-                override fun FolderKLoggerThreadContext.persistence() {
+                override fun FolderKLoggerContext.persistence() {
                     this.saveAs(file)
                 }
 
                 @ExperimentalApi
-                override fun FolderKLoggerThreadContext.clearPersistence() {
+                override fun FolderKLoggerContext.clearPersistence() {
                     this.removeSaveAs(file)
                 }
             }
@@ -182,12 +182,12 @@ interface LogPersistenceStrategy {
         @ExperimentalApi
         fun saveTo(directory: Path): LogPersistenceStrategy {
             return object : LogPersistenceStrategy {
-                override fun FolderKLoggerThreadContext.persistence() {
+                override fun FolderKLoggerContext.persistence() {
                     this.saveTo(directory)
                 }
 
                 @ExperimentalApi
-                override fun FolderKLoggerThreadContext.clearPersistence() {
+                override fun FolderKLoggerContext.clearPersistence() {
                     this.removeSaveTo(directory)
                 }
             }
