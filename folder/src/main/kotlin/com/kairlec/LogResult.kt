@@ -408,7 +408,7 @@ internal fun KLogger.write(resultWrapper: RuntimeLogResultWrapper) {
 
 @PublishedApi
 internal fun FolderKLogger.matchCache(logBuffer: LogBuffer): Boolean {
-    val c = threadFolderContext
+    val c = FolderKLoggerContext.contextThreadLocal.get() ?: return false
     if (c.matchFastFailed) {
         // fast fail 是前面已经flush过了,这里不需要flush
         c.buffer.add(logBuffer)
