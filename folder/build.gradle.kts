@@ -37,7 +37,7 @@ protobuf {
     }
 }
 
-tasks.jar {
+tasks.withType<Jar> {
     duplicatesStrategy = EXCLUDE
 }
 
