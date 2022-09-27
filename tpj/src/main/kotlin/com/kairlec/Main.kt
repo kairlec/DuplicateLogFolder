@@ -1,19 +1,24 @@
 package com.kairlec
 
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import mu.KotlinLogging
 
 private val log = KotlinLogging.foldLogger {}
 
-fun main() {
+suspend fun main() {
     repeat(5) {
-        log.folder {
-            repeat(3) {
-                log.warn { "abcd" }
+        log.suspendFolder(33) {
+            val j = coroutineScope {
+                val job = launch {
+                    log.warn { "abcd" }
+                }
+                if (it > 3) {
+                    log.error("err")
+                }
+                job
             }
-            if (it > 3) {
-                log.error("err")
-            }
-            log.info(Exception("exp", RuntimeException("rcau"))) { "aaa" }
+            j.join()
         }
     }
 }

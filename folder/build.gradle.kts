@@ -9,7 +9,7 @@ plugins {
     id("com.google.protobuf") version "0.8.19"
 }
 
-val protobufVersion = "3.21.5"
+val protobufVersion = "3.21.6"
 
 dependencies {
     implementation("org.jetbrains.kotlin:kotlin-reflect")
@@ -18,6 +18,8 @@ dependencies {
     implementation("com.google.protobuf:protobuf-java:${protobufVersion}")
     implementation("com.google.protobuf:protobuf-kotlin:${protobufVersion}")
     implementation("com.google.protobuf:protobuf-java-util:${protobufVersion}")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.4")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-slf4j:1.6.4")
     protobuf(projects.protos)
 }
 

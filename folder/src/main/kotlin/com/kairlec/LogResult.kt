@@ -10,9 +10,15 @@ import com.kairlec.FoldMdcKeys.setFoldMdc
 import com.kairlec.FolderKLoggerContexts.FolderKLoggerContext
 import com.kairlec.FolderKLoggerContexts.currentLogFolderId
 import com.kairlec.log.*
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.asContextElement
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.slf4j.MDCContext
+import kotlinx.coroutines.withContext
 import mu.KotlinLogging
 import org.slf4j.MDC
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.DeprecationLevel.ERROR
 
 
 data class MatchResult(
@@ -142,7 +148,7 @@ object FoldMdcKeys {
 }
 
 inline fun FolderKLogger.folder(
-    id: Long = Thread.currentThread().id,
+    id: Long,
     configuration: FolderKLoggerConfig.() -> Unit = { },
     block: () -> Unit
 ) {
@@ -160,6 +166,63 @@ inline fun FolderKLogger.folder(
             }
         }
         currentLogFolderId.remove()
+    }
+}
+@Deprecated(
+    "如果不在同一个线程,当前线程的id不一致,请尽可能指定id",
+    ReplaceWith("this.folder(TODO(\"id here\") as Long,configuration,block)"),
+    ERROR
+)
+inline fun FolderKLogger.folder(
+    configuration: FolderKLoggerConfig.() -> Unit = { },
+    block: () -> Unit
+) {
+    folder(Thread.currentThread().id, configuration, block)
+}
+
+@Deprecated(
+    "如果发生一次协程切换,则可能获取到的名称或当前线程的id不一致,请尽可能指定id",
+    ReplaceWith("this.suspendFolder(TODO(\"id here\") as Long,configuration,block)"),
+    ERROR
+)
+suspend inline fun FolderKLogger.suspendFolder(
+    noinline configuration: suspend FolderKLoggerConfig.() -> Unit = { },
+    crossinline block: suspend () -> Unit
+) {
+    suspendFolder(
+        currentCoroutineContext()[CoroutineName.Key]?.name?.hashCode()?.toLong() ?: Thread.currentThread().id,
+        configuration,
+        block
+    )
+}
+
+suspend inline fun FolderKLogger.suspendFolder(
+    noinline idProvider: suspend () -> Long,
+    noinline configuration: suspend FolderKLoggerConfig.() -> Unit = { },
+    crossinline block: suspend () -> Unit
+) {
+    suspendFolder(idProvider(), configuration, block)
+}
+
+suspend inline fun FolderKLogger.suspendFolder(
+    id: Long,
+    noinline configuration: suspend FolderKLoggerConfig.() -> Unit = { },
+    crossinline block: suspend () -> Unit
+) {
+    withContext(currentLogFolderId.asContextElement(id) + MDCContext()) {
+        val c = FolderKLoggerContexts[id]?.apply { resetMatch() }
+            ?: FolderKLoggerContext(id, FolderKLoggerConfig().apply { configuration() }.check()).also {
+                FolderKLoggerContexts[id] = it
+            }
+        try {
+            block()
+        } finally {
+            c.clearFinal {
+                withMdc {
+                    flushLast()
+                }
+            }
+        }
     }
 }
 
