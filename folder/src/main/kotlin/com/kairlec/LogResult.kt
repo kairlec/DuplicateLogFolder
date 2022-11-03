@@ -1,7 +1,10 @@
 @file:Suppress(
-    "UnusedReceiverParameter", "RemoveRedundantQualifierName", "unused",
+    "UnusedReceiverParameter",
+    "RemoveRedundantQualifierName",
+    "unused",
     "MemberVisibilityCanBePrivate"
 )
+@file:OptIn(ExperimentalContracts::class)
 
 package com.kairlec
 
@@ -19,7 +22,9 @@ import mu.KotlinLogging
 import org.slf4j.MDC
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.DeprecationLevel.ERROR
-
+import kotlin.contracts.ExperimentalContracts
+import kotlin.contracts.InvocationKind
+import kotlin.contracts.contract
 
 data class MatchResult(
     var idx: Int = 0,
@@ -45,13 +50,15 @@ class FolderKLoggerConfig {
 object FolderKLoggerContexts {
     private val contextMap by lazy {
         ConcurrentHashMap<Long, FolderKLoggerContext>().also {
-            Runtime.getRuntime().addShutdownHook(Thread({
-                it.values.forEach { context ->
-                    context.withMdc {
-                        log.flushBuffer()
+            Runtime.getRuntime().addShutdownHook(
+                Thread({
+                    it.values.forEach { context ->
+                        context.withMdc {
+                            log.flushBuffer()
+                        }
                     }
-                }
-            }, "log-folder-clear"))
+                }, "log-folder-clear")
+            )
         }
     }
     private val log = KotlinLogging.foldLogger { }
@@ -137,7 +144,7 @@ object FoldMdcKeys {
     fun setFoldMdc(id: Long, times: Int) {
         MDC.put(foldIdMdcKey, id.toString())
         MDC.put(foldTimesMdcKey, times.toString())
-        MDC.put(foldFormatKey, " [${id}, x${times}]")
+        MDC.put(foldFormatKey, " [$id, x$times]")
     }
 
     fun clearFoldMdc() {
@@ -149,9 +156,13 @@ object FoldMdcKeys {
 
 inline fun FolderKLogger.folder(
     id: Long,
-    configuration: FolderKLoggerConfig.() -> Unit = { },
-    block: () -> Unit
+    noinline configuration: FolderKLoggerConfig.() -> Unit = { },
+    crossinline block: () -> Unit
 ) {
+    contract {
+        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(configuration, InvocationKind.EXACTLY_ONCE)
+    }
     currentLogFolderId.set(id)
     val c = FolderKLoggerContexts[id]?.apply { resetMatch() }
         ?: FolderKLoggerContext(id, FolderKLoggerConfig().apply { configuration() }.check()).also {
@@ -168,15 +179,20 @@ inline fun FolderKLogger.folder(
         currentLogFolderId.remove()
     }
 }
+
 @Deprecated(
     "如果不在同一个线程,当前线程的id不一致,请尽可能指定id",
     ReplaceWith("this.folder(TODO(\"id here\") as Long,configuration,block)"),
     ERROR
 )
 inline fun FolderKLogger.folder(
-    configuration: FolderKLoggerConfig.() -> Unit = { },
-    block: () -> Unit
+    noinline configuration: FolderKLoggerConfig.() -> Unit = { },
+    crossinline block: () -> Unit
 ) {
+    contract {
+        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(configuration, InvocationKind.EXACTLY_ONCE)
+    }
     folder(Thread.currentThread().id, configuration, block)
 }
 
@@ -189,6 +205,10 @@ suspend inline fun FolderKLogger.suspendFolder(
     noinline configuration: suspend FolderKLoggerConfig.() -> Unit = { },
     crossinline block: suspend () -> Unit
 ) {
+    contract {
+        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(configuration, InvocationKind.EXACTLY_ONCE)
+    }
     suspendFolder(
         currentCoroutineContext()[CoroutineName.Key]?.name?.hashCode()?.toLong() ?: Thread.currentThread().id,
         configuration,
@@ -201,6 +221,11 @@ suspend inline fun FolderKLogger.suspendFolder(
     noinline configuration: suspend FolderKLoggerConfig.() -> Unit = { },
     crossinline block: suspend () -> Unit
 ) {
+    contract {
+        callsInPlace(idProvider, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(configuration, InvocationKind.EXACTLY_ONCE)
+    }
     suspendFolder(idProvider(), configuration, block)
 }
 
@@ -209,6 +234,10 @@ suspend inline fun FolderKLogger.suspendFolder(
     noinline configuration: suspend FolderKLoggerConfig.() -> Unit = { },
     crossinline block: suspend () -> Unit
 ) {
+    contract {
+        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+        callsInPlace(configuration, InvocationKind.EXACTLY_ONCE)
+    }
     withContext(currentLogFolderId.asContextElement(id) + MDCContext()) {
         val c = FolderKLoggerContexts[id]?.apply { resetMatch() }
             ?: FolderKLoggerContext(id, FolderKLoggerConfig().apply { configuration() }.check()).also {
@@ -225,7 +254,6 @@ suspend inline fun FolderKLogger.suspendFolder(
         }
     }
 }
-
 
 class MdcScope(private val c: FolderKLoggerContext) {
     /**
@@ -271,6 +299,9 @@ class MdcScope(private val c: FolderKLoggerContext) {
 }
 
 inline fun FolderKLoggerContext.withMdc(block: MdcScope.() -> Unit) {
+    contract {
+        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+    }
     try {
         MdcScope(this).block()
     } finally {
@@ -313,6 +344,5 @@ internal fun FolderKLogger.matchCache(logBuffer: LogBuffer): Boolean {
     c.matchIndex++
     return true
 }
-
 
 class ArrayWrapper(val array: Array<out Any?>, val newSize: Int)

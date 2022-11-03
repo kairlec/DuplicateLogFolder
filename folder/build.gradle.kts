@@ -6,19 +6,18 @@ import org.gradle.api.file.DuplicatesStrategy.EXCLUDE
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "1.7.10"
+    kotlin("jvm") version "1.7.20"
     id("com.google.protobuf") version "0.8.19"
 }
 
-val protobufVersion = "3.21.6"
+val protobufVersion = "3.21.9"
 
 dependencies {
-    implementation("org.jetbrains.kotlin:kotlin-reflect")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
-    implementation("io.github.microutils:kotlin-logging-jvm:2.1.23")
-    implementation("com.google.protobuf:protobuf-java:${protobufVersion}")
-    implementation("com.google.protobuf:protobuf-kotlin:${protobufVersion}")
-    implementation("com.google.protobuf:protobuf-java-util:${protobufVersion}")
+    implementation(kotlin("reflect"))
+    implementation("io.github.microutils:kotlin-logging-jvm:3.0.3")
+    implementation("com.google.protobuf:protobuf-java:$protobufVersion")
+    implementation("com.google.protobuf:protobuf-kotlin:$protobufVersion")
+    implementation("com.google.protobuf:protobuf-java-util:$protobufVersion")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-slf4j:1.6.4")
     protobuf(projects.protos)
@@ -26,7 +25,7 @@ dependencies {
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:${protobufVersion}"
+        artifact = "com.google.protobuf:protoc:$protobufVersion"
     }
     generateProtoTasks {
         all().forEach {
