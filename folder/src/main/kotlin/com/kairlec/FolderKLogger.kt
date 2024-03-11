@@ -5,13 +5,17 @@ import mu.Marker
 import org.slf4j.event.Level
 
 @PublishedApi
-internal fun FolderKLogger.foldLog(level: Level, t: Throwable?, msg: () -> Any?): Boolean {
-    return matchCache(LazyLogBuffer(false, level, t, msg))
-}
-
-@PublishedApi
-internal fun FolderKLogger.foldLog(level: Level, t: Throwable?, format: String?, argArray: ArrayWrapper): Boolean {
-    return matchCache(ArgLogBuffer(false, level, t, format, argArray))
+internal fun FolderKLogger.foldLog(
+    level: Level,
+    t: Throwable?,
+    msg: () -> Any?,
+): Boolean {
+    return try {
+        matchCache(LazyLogBuffer(false, level, t, msg))
+    } catch (e: Throwable) {
+        kLogger.error(e) { "check foldLog error" }
+        false
+    }
 }
 
 @PublishedApi
@@ -19,12 +23,32 @@ internal fun FolderKLogger.foldLog(
     level: Level,
     t: Throwable?,
     format: String?,
-    argArray: Array<out Any?>? = null
+    argArray: ArrayWrapper,
 ): Boolean {
-    return matchCache(ArgLogBuffer(false, level, t, format, argArray?.let { ArrayWrapper(it, it.size) }))
+    return try {
+        matchCache(ArgLogBuffer(false, level, t, format, argArray))
+    } catch (e: Throwable) {
+        kLogger.error(e) { "check foldLog error" }
+        false
+    }
 }
 
-class FolderKLogger(private val kLogger: KLogger) : KLogger by kLogger {
+@PublishedApi
+internal fun FolderKLogger.foldLog(
+    level: Level,
+    t: Throwable?,
+    format: String?,
+    argArray: Array<out Any?>? = null,
+): Boolean {
+    return try {
+        matchCache(ArgLogBuffer(false, level, t, format, argArray?.let { ArrayWrapper(it, it.size) }))
+    } catch (e: Throwable) {
+        kLogger.error(e) { "check foldLog error" }
+        false
+    }
+}
+
+class FolderKLogger(internal val kLogger: KLogger) : KLogger by kLogger {
     override fun debug(msg: () -> Any?) {
         if (foldLog(Level.DEBUG, null, msg)) {
             return
