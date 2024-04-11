@@ -2,7 +2,7 @@
     "UnusedReceiverParameter",
     "RemoveRedundantQualifierName",
     "unused",
-    "MemberVisibilityCanBePrivate"
+    "MemberVisibilityCanBePrivate",
 )
 @file:OptIn(ExperimentalContracts::class)
 
@@ -28,7 +28,7 @@ import kotlin.contracts.contract
 
 data class MatchResult(
     var idx: Int = 0,
-    var failed: Boolean = false
+    var failed: Boolean = false,
 ) {
     fun reset() {
         idx = 0
@@ -42,9 +42,10 @@ class FolderKLoggerConfig {
     var persistenceBuffer: Int = 50
 
     @PublishedApi
-    internal fun check() = apply {
-        require(folderMaxLimit > 1) { "folderMaxLimit must be greater than 1" }
-    }
+    internal fun check() =
+        apply {
+            require(folderMaxLimit > 1) { "folderMaxLimit must be greater than 1" }
+        }
 }
 
 object FolderKLoggerContexts {
@@ -57,7 +58,7 @@ object FolderKLoggerContexts {
                             log.flushBuffer()
                         }
                     }
-                }, "log-folder-clear")
+                }, "log-folder-clear"),
             )
         }
     }
@@ -65,9 +66,8 @@ object FolderKLoggerContexts {
 
     class FolderKLoggerContext(
         val id: Long,
-        val config: FolderKLoggerConfig
+        val config: FolderKLoggerConfig,
     ) {
-
         var last: List<RuntimeLogResultWrapper> = emptyList()
         val buffer: MutableList<Any> = mutableListOf()
         var countBuffer: Int = 0
@@ -82,13 +82,14 @@ object FolderKLoggerContexts {
         inline fun clearFinal(flush: FolderKLoggerContext.() -> Unit) {
             when (matchFastFailed) {
                 true -> {
-                    last = buffer.map {
-                        if (it is LogBuffer) {
-                            it.asResult()
-                        } else {
-                            it as RuntimeLogResultWrapper
+                    last =
+                        buffer.map {
+                            if (it is LogBuffer) {
+                                it.asResult()
+                            } else {
+                                it as RuntimeLogResultWrapper
+                            }
                         }
-                    }
                     countBuffer = 0
                 }
 
@@ -116,7 +117,10 @@ object FolderKLoggerContexts {
         }
     }
 
-    operator fun set(id: Long, context: FolderKLoggerContext) {
+    operator fun set(
+        id: Long,
+        context: FolderKLoggerContext,
+    ) {
         contextMap[id] = context
     }
 
@@ -141,7 +145,10 @@ object FoldMdcKeys {
         MDC.put(foldFormatKey, " [${this.id}, x${this.countBuffer}]")
     }
 
-    fun setFoldMdc(id: Long, times: Int) {
+    fun setFoldMdc(
+        id: Long,
+        times: Int,
+    ) {
         MDC.put(foldIdMdcKey, id.toString())
         MDC.put(foldTimesMdcKey, times.toString())
         MDC.put(foldFormatKey, " [$id, x$times]")
@@ -157,17 +164,18 @@ object FoldMdcKeys {
 inline fun FolderKLogger.folder(
     id: Long,
     noinline configuration: FolderKLoggerConfig.() -> Unit = { },
-    crossinline block: () -> Unit
+    crossinline block: () -> Unit,
 ) {
     contract {
         callsInPlace(block, InvocationKind.EXACTLY_ONCE)
         callsInPlace(configuration, InvocationKind.EXACTLY_ONCE)
     }
     currentLogFolderId.set(id)
-    val c = FolderKLoggerContexts[id]?.apply { resetMatch() }
-        ?: FolderKLoggerContext(id, FolderKLoggerConfig().apply { configuration() }.check()).also {
-            FolderKLoggerContexts[id] = it
-        }
+    val c =
+        FolderKLoggerContexts[id]?.apply { resetMatch() }
+            ?: FolderKLoggerContext(id, FolderKLoggerConfig().apply { configuration() }.check()).also {
+                FolderKLoggerContexts[id] = it
+            }
     try {
         block()
     } finally {
@@ -183,11 +191,11 @@ inline fun FolderKLogger.folder(
 @Deprecated(
     "如果不在同一个线程,当前线程的id不一致,请尽可能指定id",
     ReplaceWith("this.folder(TODO(\"id here\") as Long,configuration,block)"),
-    ERROR
+    ERROR,
 )
 inline fun FolderKLogger.folder(
     noinline configuration: FolderKLoggerConfig.() -> Unit = { },
-    crossinline block: () -> Unit
+    crossinline block: () -> Unit,
 ) {
     contract {
         callsInPlace(block, InvocationKind.EXACTLY_ONCE)
@@ -199,11 +207,11 @@ inline fun FolderKLogger.folder(
 @Deprecated(
     "如果发生一次协程切换,则可能获取到的名称或当前线程的id不一致,请尽可能指定id",
     ReplaceWith("this.suspendFolder(TODO(\"id here\") as Long,configuration,block)"),
-    ERROR
+    ERROR,
 )
 suspend inline fun FolderKLogger.suspendFolder(
     noinline configuration: suspend FolderKLoggerConfig.() -> Unit = { },
-    crossinline block: suspend () -> Unit
+    crossinline block: suspend () -> Unit,
 ) {
     contract {
         callsInPlace(block, InvocationKind.EXACTLY_ONCE)
@@ -212,14 +220,14 @@ suspend inline fun FolderKLogger.suspendFolder(
     suspendFolder(
         currentCoroutineContext()[CoroutineName.Key]?.name?.hashCode()?.toLong() ?: Thread.currentThread().id,
         configuration,
-        block
+        block,
     )
 }
 
 suspend inline fun FolderKLogger.suspendFolder(
     noinline idProvider: suspend () -> Long,
     noinline configuration: suspend FolderKLoggerConfig.() -> Unit = { },
-    crossinline block: suspend () -> Unit
+    crossinline block: suspend () -> Unit,
 ) {
     contract {
         callsInPlace(idProvider, InvocationKind.EXACTLY_ONCE)
@@ -232,17 +240,18 @@ suspend inline fun FolderKLogger.suspendFolder(
 suspend inline fun FolderKLogger.suspendFolder(
     id: Long,
     noinline configuration: suspend FolderKLoggerConfig.() -> Unit = { },
-    crossinline block: suspend () -> Unit
+    crossinline block: suspend () -> Unit,
 ) {
     contract {
         callsInPlace(block, InvocationKind.EXACTLY_ONCE)
         callsInPlace(configuration, InvocationKind.EXACTLY_ONCE)
     }
     withContext(currentLogFolderId.asContextElement(id) + MDCContext()) {
-        val c = FolderKLoggerContexts[id]?.apply { resetMatch() }
-            ?: FolderKLoggerContext(id, FolderKLoggerConfig().apply { configuration() }.check()).also {
-                FolderKLoggerContexts[id] = it
-            }
+        val c =
+            FolderKLoggerContexts[id]?.apply { resetMatch() }
+                ?: FolderKLoggerContext(id, FolderKLoggerConfig().apply { configuration() }.check()).also {
+                    FolderKLoggerContexts[id] = it
+                }
         try {
             block()
         } finally {
@@ -269,7 +278,11 @@ class MdcScope(private val c: FolderKLoggerContext) {
         c.countBuffer = 0
         with(c) {
             with(config.persistenceStrategy) {
-                clearPersistence()
+                try {
+                    clearPersistence()
+                } catch (e: Throwable) {
+                    log.warn(e) { "clearPersistence error: $e" }
+                }
             }
         }
         clearFoldMdc()
@@ -283,11 +296,12 @@ class MdcScope(private val c: FolderKLoggerContext) {
         val buffer = c.buffer
         for (idx in buffer.indices) {
             val item = buffer[idx]
-            val result = if (item is LogBuffer) {
-                item.asResult().also { buffer[idx] = it }
-            } else {
-                item as RuntimeLogResultWrapper
-            }
+            val result =
+                if (item is LogBuffer) {
+                    item.asResult().also { buffer[idx] = it }
+                } else {
+                    item as RuntimeLogResultWrapper
+                }
             write(result)
         }
 
@@ -346,3 +360,5 @@ internal fun FolderKLogger.matchCache(logBuffer: LogBuffer): Boolean {
 }
 
 class ArrayWrapper(val array: Array<out Any?>, val newSize: Int)
+
+private val log = KotlinLogging.logger { }

@@ -41,15 +41,17 @@ fun FolderKLoggerContext.saveAs(file: Path) {
     if (countBuffer == 0 || last.isEmpty()) {
         return
     }
-    val bytes = logPersistence {
-        this.logResults.addAll(this@saveAs.last.map { it.logResult })
-        this.countBuffer = this@saveAs.countBuffer
-        val now = Instant.now()
-        this.timestamp = timestamp {
-            this.seconds = now.epochSecond
-            this.nanos = now.nano
-        }
-    }.toByteArray()
+    val bytes =
+        logPersistence {
+            this.logResults.addAll(this@saveAs.last.map { it.logResult })
+            this.countBuffer = this@saveAs.countBuffer
+            val now = Instant.now()
+            this.timestamp =
+                timestamp {
+                    this.seconds = now.epochSecond
+                    this.nanos = now.nano
+                }
+        }.toByteArray()
     Files.write(file, bytes)
 }
 
@@ -102,35 +104,39 @@ interface LogPersistenceStrategy {
 
     companion object {
         private val log = KotlinLogging.logger { }
-        private val asyncPersistenceExecutor = run {
-            val corePoolSize = System.getProperty("klogger.folder.persist.threads.core")?.toInt()
-                ?: (Runtime.getRuntime().availableProcessors() * 2)
-            val maxPoolSize = System.getProperty("klogger.folder.persist.threads.max")?.toInt()
-                ?: (max(corePoolSize, 64))
-            ThreadPoolExecutor(
-                corePoolSize,
-                maxPoolSize,
-                5,
-                MINUTES,
-                LinkedBlockingQueue(),
-                object : ThreadFactory {
-                    private val defaultFactory = Executors.defaultThreadFactory()
-                    private val threadNumber = AtomicInteger(1)
+        private val asyncPersistenceExecutor =
+            run {
+                val corePoolSize =
+                    System.getProperty("klogger.folder.persist.threads.core")?.toInt()
+                        ?: (Runtime.getRuntime().availableProcessors() * 2)
+                val maxPoolSize =
+                    System.getProperty("klogger.folder.persist.threads.max")?.toInt()
+                        ?: (max(corePoolSize, 64))
+                ThreadPoolExecutor(
+                    corePoolSize,
+                    maxPoolSize,
+                    5,
+                    MINUTES,
+                    LinkedBlockingQueue(),
+                    object : ThreadFactory {
+                        private val defaultFactory = Executors.defaultThreadFactory()
+                        private val threadNumber = AtomicInteger(1)
 
-                    override fun newThread(r: Runnable): Thread {
-                        val thread = defaultFactory.newThread(r)
-                        if (!thread.isDaemon) {
-                            thread.isDaemon = true
+                        override fun newThread(r: Runnable): Thread {
+                            val thread = defaultFactory.newThread(r)
+                            if (!thread.isDaemon) {
+                                thread.isDaemon = true
+                            }
+                            thread.name = "klogger-" + threadNumber.getAndIncrement()
+                            return thread
                         }
-                        thread.name = "klogger-" + threadNumber.getAndIncrement()
-                        return thread
-                    }
-                }
-            )
-        }
+                    },
+                )
+            }
 
-        val persistenceDir: Path = System.getProperty("klogger.folder.persist.dir")?.let { Path.of(it) }
-            ?: Path.of(System.getProperty("java.io.tmpdir"), "klogger_dump")
+        val persistenceDir: Path =
+            System.getProperty("klogger.folder.persist.dir")?.let { Path.of(it) }
+                ?: Path.of(System.getProperty("java.io.tmpdir"), "klogger_dump")
 
         init {
             if (Files.notExists(persistenceDir)) {
@@ -141,10 +147,11 @@ interface LogPersistenceStrategy {
                 log.warn { "flush last persist message starting" }
                 dumps.forEach {
                     val persistence = LogPersistence.parseFrom(Files.readAllBytes(it))
-                    val instant = Instant.ofEpochSecond(
-                        persistence.timestamp.seconds,
-                        persistence.timestamp.nanos.toLong()
-                    )
+                    val instant =
+                        Instant.ofEpochSecond(
+                            persistence.timestamp.seconds,
+                            persistence.timestamp.nanos.toLong(),
+                        )
                     val time = DateTimeFormatter.ISO_DATE_TIME.withZone(ZoneId.systemDefault()).format(instant)
                     log.warn { "log of dump id [${it.fileName}] persist at $time" }
                     MDC.put(foldTimesMdcKey, persistence.countBuffer.toString())
@@ -159,7 +166,11 @@ interface LogPersistenceStrategy {
                         MDC.remove(foldIdMdcKey)
                         MDC.remove(foldFormatKey)
                     }
-                    it.deleteIfExists()
+                    try {
+                        it.deleteIfExists()
+                    } catch (e: Throwable) {
+                        log.error(e) { "delete dump file failed" }
+                    }
                 }
                 log.warn { "flush last persist message finished" }
             }
